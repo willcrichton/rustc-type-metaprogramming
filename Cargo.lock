@@ -1,0 +1,4 @@
+[[package]]
+name = "rustc-type-examples"
+version = "0.1.0"
+

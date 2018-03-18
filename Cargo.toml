@@ -1,0 +1,6 @@
+[package]
+name = "rustc-type-examples"
+version = "0.1.0"
+authors = ["Will Crichton <wcrichto@cs.stanford.edu>"]
+
+[dependencies]
