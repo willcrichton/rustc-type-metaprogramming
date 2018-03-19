@@ -4,7 +4,7 @@ Materials accompanying the note ["Type-directed metaprogramming in Rust."](http:
 
 ```
 $ cd run-compiler
-$ rustup override set nightly
+$ rustup override set nightly-2018-03-19
 $ cargo run
 ```
 
