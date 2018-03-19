@@ -38,13 +38,15 @@ impl<'a, 'tcx: 'a> Visitor<'tcx> for TestVisitor<'a, 'tcx> {
         intravisit::NestedVisitorMap::OnlyBodies(&self.tcx.hir)
     }
 
-    fn visit_expr(&mut self, ex: &'tcx hir::Expr) {
-        let table = self.tcx.typeck_tables_of(ex.hir_id.owner_def_id());
-        let ty = table.node_id_to_type(ex.hir_id);
-        intravisit::walk_expr(self, ex);
+    fn visit_expr(&mut self, expr: &'tcx hir::Expr) {
+        let table = self.tcx.typeck_tables_of(expr.hir_id.owner_def_id());
+        let ty = table.node_id_to_type(expr.hir_id);
+        println!("Node: {:?}, type: {:?}", expr, ty);
+        intravisit::walk_expr(self, expr);
     }
 }
 
+#[allow(unused_variables)]
 fn main() {
     syntax::with_globals(|| {
         let codemap = syntax::codemap::CodeMap::new(syntax::codemap::FilePathMapping::empty());
@@ -65,27 +67,25 @@ fn main() {
                 .metadata_loader(),
         );
 
-        let krate = {
-            let mut resolver = ext::base::DummyResolver;
-            let cx = ext::base::ExtCtxt::new(
-                &sess.parse_sess,
-                ext::expand::ExpansionConfig::default("".to_string()),
-                &mut resolver,
-            );
-
+        let mut resolver = ext::base::DummyResolver;
+        let cx = ext::base::ExtCtxt::new(
+            &sess.parse_sess,
+            ext::expand::ExpansionConfig::default("".to_string()),
+            &mut resolver,
+        );
+        let krate =
             ast::Crate {
                 module: ast::Mod {
                     inner: DUMMY_SP,
                     items: vec![
                         quote_item!(
                             &cx,
-                            fn main(){let x = 1 + 2;}).unwrap(),
+                            fn main(){let x: i32 = 1 + 2;}).unwrap(),
                     ],
                 },
                 attrs: vec![],
                 span: DUMMY_SP,
-            }
-        };
+            };
 
 
         let driver::ExpansionResult {
@@ -127,7 +127,7 @@ fn main() {
 
         ty::TyCtxt::create_and_enter(&sess, &cstore, local_providers, extern_providers, &arenas, resolutions, hir_map, query_result_on_disk_cache, "", tx, &output_filenames, |tcx| {
             typeck::check_crate(tcx).expect("typeck failure");
-            let mut visitor = TestVisitor{tcx: tcx};
+            let mut visitor = TestVisitor {tcx: tcx};
             tcx.hir.krate().visit_all_item_likes(&mut visitor.as_deep_visitor());
         });
     })

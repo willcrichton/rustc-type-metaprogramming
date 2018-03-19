@@ -1,0 +1,7 @@
+[package]
+name = "auto-gc-test"
+version = "0.1.0"
+authors = ["Will Crichton <wcrichto@cs.stanford.edu>"]
+
+[dependencies]
+auto_gc = {path = "../auto-gc"}

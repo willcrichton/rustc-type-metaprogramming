@@ -1,0 +1,11 @@
+[package]
+name = "auto_gc"
+version = "0.1.0"
+authors = ["Will Crichton <wcrichto@cs.stanford.edu>"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = {version = "0.12.13", features = ["full"]}
+quote = "0.4.2"
