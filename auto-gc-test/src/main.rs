@@ -2,11 +2,12 @@
 
 extern crate auto_gc;
 use auto_gc::auto_gc;
+use std::rc::Rc;
 
 fn main() {
-    let x = auto_gc!{
-        let y = 1 + 2;
-        y + 3
+    auto_gc! {
+        let x = 1;
+        let y = 1 + x;
     };
-    //println!("{:?}", *x);
+    println!("{:?}", *y);
 }

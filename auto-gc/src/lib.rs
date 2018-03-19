@@ -11,8 +11,6 @@ extern crate rustc_incremental;
 extern crate rustc_typeck as typeck;
 extern crate syntax_pos;
 extern crate syntax;
-extern crate syn;
-extern crate quote as quoteshim;
 
 use std::sync::mpsc;
 use std::rc::Rc;
@@ -27,9 +25,8 @@ use syntax::{ext, ast};
 use syntax_pos::DUMMY_SP;
 use syntax::ptr::P;
 use syntax::ext::quote::rt::ToTokens;
-
-use syntax::tokenstream;
-use quoteshim::ToTokens as OtherToTokens;
+use syntax::{tokenstream, parse};
+use syntax_pos::symbol::Ident;
 
 // NOTE: if you are seeing "error[E0463]: can't find crate for `std`"
 // then you need to change this SYSROOT to your specific machine's.
@@ -47,14 +44,18 @@ struct TestFolder<'a, 'tcx: 'a, 'ecx: 'a> {
 
 impl<'a, 'tcx: 'a, 'ecx> Folder<'tcx> for TestFolder<'a, 'tcx, 'ecx> {
     fn fold_expr(&mut self, expr: &'tcx hir::Expr) -> P<ast::Expr> {
-        use hir::{Expr_, BinOp_};
-        match expr.node {
+        use hir::{Expr_, BinOp_, QPath};
+        let new_expr = match expr.node {
             Expr_::ExprLit(ref lit) => quote_expr!(&self.ecx, $lit),
+            Expr_::ExprPath(QPath::Resolved(_, ref path)) => {
+                let ident = Ident::with_empty_ctxt(path.segments[0].name);
+                quote_expr!(&self.ecx, *$ident)
+            },
             Expr_::ExprBinary(ref binop, ref e1, ref e2) => {
                 let e1 = self.fold_expr(e1);
                 let e2 = self.fold_expr(e2);
                 match binop.node {
-                    BinOp_::BiAdd => quote_expr!(&self.ecx, Rc::new(*$e1 + *$e2)),
+                    BinOp_::BiAdd => quote_expr!(&self.ecx, *$e1 + *$e2),
                     _ => panic!("Not yet implemented")
                 }
             },
@@ -64,7 +65,8 @@ impl<'a, 'tcx: 'a, 'ecx> Folder<'tcx> for TestFolder<'a, 'tcx, 'ecx> {
                 quote_expr!(&self.ecx, {$new_block})
             },
             _ => panic!("Not yet implemented")
-        }
+        };
+        quote_expr!(&self.ecx, Rc::new($new_expr))
     }
 
     fn fold_stmt(&mut self, stmt: &'tcx hir::Stmt) -> ast::Stmt {
@@ -76,7 +78,7 @@ impl<'a, 'tcx: 'a, 'ecx> Folder<'tcx> for TestFolder<'a, 'tcx, 'ecx> {
                 match decl.node {
                     Decl_::DeclLocal(ref local) => {
                         let name = if let PatKind::Binding(_, _, ref name, _) = local.pat.node {
-                            syntax_pos::symbol::Ident::with_empty_ctxt(name.node)
+                            Ident::with_empty_ctxt(name.node)
                         } else {
                             panic!("Not yet implemented")
                         };
@@ -108,92 +110,103 @@ impl<'a, 'tcx: 'a, 'ecx> Folder<'tcx> for TestFolder<'a, 'tcx, 'ecx> {
 #[allow(unused_variables)]
 #[proc_macro]
 pub fn auto_gc(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    syntax::with_globals(|| {
-        let codemap = syntax::codemap::CodeMap::new(syntax::codemap::FilePathMapping::empty());
-        codemap.new_filemap(syntax_pos::FileName::Custom("".to_string()), "".to_string());
+    let codemap = syntax::codemap::CodeMap::new(syntax::codemap::FilePathMapping::empty());
+    codemap.new_filemap(syntax_pos::FileName::Custom("".to_string()), "".to_string());
 
-        let mut opts = session::config::basic_options();
-        opts.maybe_sysroot = Some(PathBuf::from(SYSROOT));
-        let sess = session::build_session_with_codemap(
-            opts,
-            None,
-            Registry::new(&[]),
-            Rc::new(codemap),
-            None,
-        );
+    let mut opts = session::config::basic_options();
+    opts.maybe_sysroot = Some(PathBuf::from(SYSROOT));
+    let sess = session::build_session_with_codemap(
+        opts,
+        None,
+        Registry::new(&[]),
+        Rc::new(codemap),
+        None,
+    );
 
-        let cstore = CStore::new(
-            rustc_trans_utils::trans_crate::MetadataOnlyTransCrate::new()
-                .metadata_loader(),
-        );
+    let cstore = CStore::new(
+        rustc_trans_utils::trans_crate::MetadataOnlyTransCrate::new()
+            .metadata_loader(),
+    );
 
-        let mut resolver = ext::base::DummyResolver;
-        let cx = ext::base::ExtCtxt::new(
-            &sess.parse_sess,
-            ext::expand::ExpansionConfig::default("".to_string()),
-            &mut resolver,
-        );
-        let krate =
-            ast::Crate {
-                module: ast::Mod {
-                    inner: DUMMY_SP,
-                    items: vec![
-                        quote_item!(
-                            &cx,
-                            fn main(){let x: i32 = 1 + 2;}).unwrap(),
-                    ],
-                },
-                attrs: vec![],
-                span: DUMMY_SP,
-            };
+    let mut resolver = ext::base::DummyResolver;
+    let ecx = ext::base::ExtCtxt::new(
+        &sess.parse_sess,
+        ext::expand::ExpansionConfig::default("".to_string()),
+        &mut resolver,
+    );
 
+    let ts = proc_macro::__internal::token_stream_inner(ts);
+    let mut parser = parse::stream_to_parser(&sess.parse_sess, ts);
+    let mut stmts = Vec::new();
+    while let Some(stmt) = parser.parse_full_stmt(false).unwrap()
+    {
+        stmts.push(stmt);
 
-        let driver::ExpansionResult {
-            expanded_crate,
-            defs,
-            analysis,
-            resolutions,
-            mut hir_forest,
-        } = driver::phase_2_configure_and_expand(
-            &sess,
-            &cstore,
-            krate,
-            None,
-            "test",
-            None,
-            MakeGlobMap::No,
-            |_| Ok(()),
-        ).unwrap();
+        if parser.token == parse::token::Token::Eof {
+            break;
+        }
+    }
 
-        let arenas = ty::AllArenas::new();
-
-        let hir_map = hir::map::map_crate(&sess, &cstore, &mut hir_forest, &defs);
-
-        let mut local_providers = ty::maps::Providers::default();
-        driver::default_provide(&mut local_providers);
-
-        let mut extern_providers = local_providers;
-        driver::default_provide_extern(&mut extern_providers);
-
-        let query_result_on_disk_cache = rustc_incremental::load_query_result_cache(&sess);
-
-        let (tx, _rx) = mpsc::channel();
-
-        let input = session::config::Input::Str {
-            name: syntax_pos::FileName::Custom("".to_string()),
-            input: "".to_string(),
+    let krate =
+        ast::Crate {
+            module: ast::Mod {
+                inner: DUMMY_SP,
+                items: vec![
+                    quote_item!(&ecx, fn main(){$stmts}).unwrap()
+                ],
+            },
+            attrs: vec![],
+            span: DUMMY_SP,
         };
-        let output_filenames = driver::build_output_filenames(&input, &None, &None, &[], &sess);
 
-        ty::TyCtxt::create_and_enter(&sess, &cstore, local_providers, extern_providers, &arenas, resolutions, hir_map, query_result_on_disk_cache, "", tx, &output_filenames, |tcx| {
-            typeck::check_crate(tcx).expect("typeck failure");
-            let mut folder = TestFolder {ecx: &cx, tcx: tcx};
-            let expr =
-                folder.fold_expr(&tcx.hir.krate().bodies.values().next().unwrap().value);
-            let ts: tokenstream::TokenStream = expr.to_tokens(&cx).into_iter().collect();
-            let ts = proc_macro::__internal::token_stream_wrap(ts);
-            println!("{}", ts);
-            ts
-        })
+    let driver::ExpansionResult {
+        expanded_crate,
+        defs,
+        analysis,
+        resolutions,
+        mut hir_forest,
+    } = driver::phase_2_configure_and_expand(
+        &sess,
+        &cstore,
+        krate,
+        None,
+        "test",
+        None,
+        MakeGlobMap::No,
+        |_| Ok(()),
+    ).unwrap();
+
+    let arenas = ty::AllArenas::new();
+
+    let hir_map = hir::map::map_crate(&sess, &cstore, &mut hir_forest, &defs);
+
+    let mut local_providers = ty::maps::Providers::default();
+    driver::default_provide(&mut local_providers);
+
+    let mut extern_providers = local_providers;
+    driver::default_provide_extern(&mut extern_providers);
+
+    let query_result_on_disk_cache = rustc_incremental::load_query_result_cache(&sess);
+
+    let (tx, _rx) = mpsc::channel();
+
+    let input = session::config::Input::Str {
+        name: syntax_pos::FileName::Custom("".to_string()),
+        input: "".to_string(),
+    };
+    let output_filenames = driver::build_output_filenames(&input, &None, &None, &[], &sess);
+
+    ty::TyCtxt::create_and_enter(&sess, &cstore, local_providers, extern_providers, &arenas, resolutions, hir_map, query_result_on_disk_cache, "", tx, &output_filenames, |tcx| {
+        typeck::check_crate(tcx).expect("typeck failure");
+        let mut folder = TestFolder {ecx: &ecx, tcx: tcx};
+        let ts: tokenstream::TokenStream =
+            match tcx.hir.krate().bodies.values().next().unwrap().value.node {
+                hir::Expr_::ExprBlock(ref block) => block
+                    .stmts.iter()
+                    .flat_map(|stmt| folder.fold_stmt(stmt).to_tokens(&ecx))
+                    .collect(),
+                _ => unreachable!()
+            };
+        proc_macro::__internal::token_stream_wrap(ts)
     })
 }

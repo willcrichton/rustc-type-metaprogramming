@@ -7,5 +7,3 @@ authors = ["Will Crichton <wcrichto@cs.stanford.edu>"]
 proc-macro = true
 
 [dependencies]
-syn = {version = "0.12.13", features = ["full"]}
-quote = "0.4.2"
