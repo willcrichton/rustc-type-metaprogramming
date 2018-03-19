@@ -1,6 +1,6 @@
 # Type-directed metaprogramming in Rust
 
-Materials accompanying the note ["Type-directed metaprogramming in Rust."](http://willcrichton.net/notes/type-directed-metaprogramming-in-rust/). Each subdirectory is its own crate, and will be need to be run in nightly. For example:
+Materials accompanying the note ["Type-directed metaprogramming in Rust."](http://willcrichton.net/notes/type-directed-metaprogramming-in-rust/) Each subdirectory is its own crate, and will be need to be run in nightly. For example:
 
 ```
 $ cd run-compiler
